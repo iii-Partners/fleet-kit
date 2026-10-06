@@ -64,6 +64,9 @@ test('extractLinks: href and bare links, entities decoded, deduped, http(s) only
   assert.deepEqual(extractLinks(msgFixture()), ['https://eye.iii.partners/x?y=1&z=2', 'https://example.com/plain']);
   assert.deepEqual(extractLinks(''), []);
   assert.deepEqual(extractLinks(null), []);
+  const xhtml = '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><style>.h{background:url(https://cdn.example.com/bg.png)}</style></head><body><a href="https://eye.iii.partners/accept">Accept</a><p>or copy https://eye.iii.partners/accept into your browser</p><img src="https://cdn.example.com/logo.png"></body></html>';
+  assert.deepEqual(extractLinks(xhtml), ['https://eye.iii.partners/accept'], 'DOCTYPE, xmlns, css url() and img src are not links');
+  assert.deepEqual(extractLinks(msgFixture({ html: { body: xhtml } })), ['https://eye.iii.partners/x?y=1&z=2', 'https://example.com/plain', 'https://eye.iii.partners/accept']);
 });
 
 test('stripHtml and textOf give the visible text', () => {
@@ -88,6 +91,7 @@ test('assert helpers: sender, subject, recipient, contains', () => {
 
 test('assertLinksResolve: 200 and a redirect to 200 pass; a 404, a network error and a redirect to an error page fail by name; skip works', async () => {
   const { srv, base } = await listen((req, res) => {
+    if (req.url === '/flaky') { if (!global.__flaky) { global.__flaky = 1; req.socket.destroy(); return; } res.writeHead(200); res.end('recovered'); return; }
     if (req.url === '/ok') { res.writeHead(200); res.end('fine'); } else if (req.url === '/moved') { res.writeHead(302, { location: '/ok' }); res.end(); } else if (req.url === '/gone') { res.writeHead(302, { location: '/error?code=expired' }); res.end(); } else if (req.url.startsWith('/error')) { res.writeHead(200); res.end('sorry'); } else { res.writeHead(404); res.end('nope'); }
   });
   try {
@@ -97,7 +101,10 @@ test('assertLinksResolve: 200 and a redirect to 200 pass; a 404, a network error
     assert.equal(good[1].redirected, true);
     await assert.rejects(() => assertLinksResolve(`<a href="${base}/ok">a</a> <a href="${base}/missing">b</a>`), (e) => e instanceof DeliveryError && /missing/.test(e.message) && /404/.test(e.message) && e.results.length === 2);
     await assert.rejects(() => assertLinksResolve(`${base}/gone`), (e) => /redirected to an error page/.test(e.message));
-    await assert.rejects(() => assertLinksResolve('http://127.0.0.1:9/dead', { timeoutMs: 2000 }), (e) => e instanceof DeliveryError && /dead/.test(e.message));
+    await assert.rejects(() => assertLinksResolve('http://127.0.0.1:9/dead', { timeoutMs: 2000 }), (e) => e instanceof DeliveryError && /dead/.test(e.message) && /after 2 attempt/.test(e.message));
+    const flaky = await assertLinksResolve(`${base}/flaky`);
+    assert.equal(flaky[0].attempts, 2, 'a reset connection is retried once and then passes');
+    await assert.rejects(() => assertLinksResolve('http://127.0.0.1:9/dead2', { timeoutMs: 2000, retries: 0 }), (e) => /after 1 attempt/.test(e.message), 'retries: 0 fails on the first network error');
     const skipped = await assertLinksResolve(`<a href="${base}/ok">a</a> <a href="${base}/unsubscribe/x">u</a>`, { skip: [/unsubscribe/] });
     assert.equal(skipped.length, 1);
     assert.deepEqual(await assertLinksResolve('no links here'), []);

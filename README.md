@@ -8,7 +8,7 @@ Two small helpers every iii Partners pillar uses, so the fleet proves the same t
 Zero dependencies. ESM. Node 18+, Cloudflare Workers, browsers.
 
 ```sh
-npm install github:iii-Partners/fleet-kit#v0.1.0
+npm install github:iii-Partners/fleet-kit#v0.1.1
 ```
 
 ## telemetry
@@ -108,6 +108,7 @@ PostHog accepts a batch in under a second but a quiet project can take a few min
 
 ## Versions
 
-Pillars pin a tag: `github:iii-Partners/fleet-kit#v0.1.0`. A change to the schema bumps the kit's minor version and the standard's version together; the `schema` property on every event says which rule it was written under.
+Pillars pin a tag: `github:iii-Partners/fleet-kit#v0.1.1`. A change to the schema bumps the kit's minor version and the standard's version together; the `schema` property on every event says which rule it was written under.
 
+- **v0.1.1** (2026-10-06): `extractLinks` no longer counts DOCTYPE, `xmlns` or CSS `url()` addresses that live only in the markup (hrefs plus bare URLs in the visible text); `assertLinksResolve` retries a network-level failure once (a status is never retried) and names the cause. Found by EYE's first live invite proof.
 - **v0.1.0** (2026-10-06): first release. `telemetry` (createTelemetry, validate, redact, parseStack, costUsd, postHogTransport) and `delivery-proof` (generateEmail, waitForEmail, waitForSms, waitForMessage, extractCode, extractLinks, assertLinksResolve, assertNoPlaceholders, assertSender, assertSubject, assertRecipient, assertContains, deleteMessage, deleteAllMessages, listMessages, serverInfo).

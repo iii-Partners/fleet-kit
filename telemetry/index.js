@@ -17,7 +17,7 @@
 // nothing is corrected later in a query. `captureError` redacts instead of refusing, because an error must
 // still be reported. `safeCapture` turns a refusal into `{ ok: false, error }` for paths that must not throw.
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 export const SCHEMA = 'iii-telemetry-v1';
 export const DEFAULT_HOST = 'https://us.i.posthog.com';
 

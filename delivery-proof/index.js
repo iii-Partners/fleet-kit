@@ -158,7 +158,11 @@ export function textOf(input) {
   return /<[a-z][\s\S]*>/i.test(s) ? stripHtml(s) : s;
 }
 
-/** Every http(s) link in a message (Mailosaur's parsed links plus a scan of both bodies) or a string (href values and bare URLs). Deduped, in order. */
+/**
+ * Every http(s) link in a message or a string, deduped, in order. For HTML: every `href` plus bare URLs in the VISIBLE text
+ * (never the DOCTYPE, `xmlns` or CSS `url()` addresses that live only in the markup); for plain text: bare URLs. For a
+ * Mailosaur message, Mailosaur's own parsed links come first.
+ */
 export function extractLinks(input) {
   const out = [];
   const add = (u) => {
@@ -167,17 +171,22 @@ export function extractLinks(input) {
     if (!/^https?:\/\//i.test(v)) return;
     if (!out.includes(v)) out.push(v);
   };
-  const scan = (s) => {
-    if (!s) return;
-    for (const m of String(s).matchAll(/href\s*=\s*["']([^"']+)["']/gi)) add(m[1]);
-    for (const m of String(s).matchAll(/https?:\/\/[^\s"'<>()[\]]+/gi)) add(m[0]);
+  const BARE = /https?:\/\/[^\s"'<>()[\]]+/gi;
+  const scanText = (s) => { if (!s) return; for (const m of String(s).matchAll(BARE)) add(m[0]); };
+  const scanMarkup = (html) => {
+    if (!html) return;
+    for (const m of String(html).matchAll(/href\s*=\s*["']([^"']+)["']/gi)) add(m[1]);
+    scanText(stripHtml(html));
   };
   if (isMessage(input)) {
     for (const l of (input.html && input.html.links) || []) add(l && l.href);
     for (const l of (input.text && input.text.links) || []) add(l && l.href);
-    scan(input.html && input.html.body);
-    scan(input.text && input.text.body);
-  } else scan(String(input ?? ''));
+    scanMarkup(input.html && input.html.body);
+    scanText(input.text && input.text.body);
+  } else {
+    const s = String(input ?? '');
+    if (/<[a-z!][\s\S]*>/i.test(s)) scanMarkup(s); else scanText(s);
+  }
   return out;
 }
 
@@ -259,25 +268,32 @@ export function assertNoPlaceholders(input, { allow = [], extra = [] } = {}) {
 
 /**
  * Fetch every link (GET, redirects followed) and throw DeliveryError naming each one that fails: a non-2xx final status,
- * a network error, or a redirect that lands on an error-looking URL. `skip` (strings or RegExps) excludes links that
+ * a network error that repeats (one retry; a status is never retried), or a redirect that lands on an error-looking URL. `skip` (strings or RegExps) excludes links that
  * must not be consumed by a probe (one-time magic links, unsubscribe). Resolves [{ url, status, final, redirected, ok }].
  */
-export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, fetch: f = globalThis.fetch, concurrency = 4, errorPagePattern = /\/(error|not-?found|404|expired|invalid|unavailable)(\/|\?|#|$)/i, allowStatus = [] } = {}) {
+export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, fetch: f = globalThis.fetch, concurrency = 4, errorPagePattern = /\/(error|not-?found|404|expired|invalid|unavailable)(\/|\?|#|$)/i, allowStatus = [], retries = 1 } = {}) {
   const links = extractLinks(input).filter((l) => !skip.some((s) => (s instanceof RegExp ? s.test(l) : l.includes(String(s)))));
   const results = [];
   let i = 0;
   async function worker() {
     while (i < links.length) {
       const url = links[i++];
-      try {
-        const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined;
-        const r = await f(url, { method: 'GET', redirect: 'follow', headers: { 'user-agent': 'iii-partners fleet-kit delivery-proof', accept: '*/*' }, signal });
-        try { if (r.body && typeof r.body.cancel === 'function') await r.body.cancel(); } catch { /* ignore */ }
-        const final = r.url || url;
-        const ok = ((r.status >= 200 && r.status < 300) || allowStatus.includes(r.status)) && !(r.redirected && errorPagePattern.test(final));
-        results.push({ url, status: r.status, final, redirected: !!r.redirected, ok, reason: ok ? undefined : (r.status >= 200 && r.status < 300 ? `redirected to an error page ${final}` : `${r.status}`) });
-      } catch (e) {
-        results.push({ url, status: 0, final: url, redirected: false, ok: false, reason: (e && e.message) || String(e) });
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined;
+          const r = await f(url, { method: 'GET', redirect: 'follow', headers: { 'user-agent': 'iii-partners fleet-kit delivery-proof', accept: '*/*' }, signal });
+          try { if (r.body && typeof r.body.cancel === 'function') await r.body.cancel(); } catch { /* ignore */ }
+          const final = r.url || url;
+          const ok = ((r.status >= 200 && r.status < 300) || allowStatus.includes(r.status)) && !(r.redirected && errorPagePattern.test(final));
+          results.push({ url, status: r.status, final, redirected: !!r.redirected, ok, attempts: attempt + 1, reason: ok ? undefined : (r.status >= 200 && r.status < 300 ? `redirected to an error page ${final}` : `${r.status}`) });
+          break;
+        } catch (e) {
+          // A network-level failure (reset, DNS, timeout) is not a broken link until it happens twice; a status is never retried.
+          if (attempt < retries) { await sleep(500 * (attempt + 1)); continue; }
+          const cause = e && e.cause && (e.cause.code || e.cause.message);
+          results.push({ url, status: 0, final: url, redirected: false, ok: false, attempts: attempt + 1, reason: `${(e && e.message) || String(e)}${cause ? ` (${cause})` : ''} after ${attempt + 1} attempt(s)` });
+          break;
+        }
       }
     }
   }
