@@ -104,6 +104,8 @@ npm test            # the kit's own tests: schema, privacy, batching, transport,
 npm run test:live   # optional: one real PostHog event (POSTHOG_KEY, read back with POSTHOG_PERSONAL_API_KEY + POSTHOG_PROJECT_ID) and one real Mailosaur read (MAILOSAUR_API_KEY + MAILOSAUR_SERVER_ID)
 ```
 
+PostHog accepts a batch in under a second but a quiet project can take a few minutes to show the event in HogQL (about three minutes seen on 2026-10-06); the live script waits up to five. Harness checks that read an event back should allow the same.
+
 ## Versions
 
 Pillars pin a tag: `github:iii-Partners/fleet-kit#v0.1.0`. A change to the schema bumps the kit's minor version and the standard's version together; the `schema` property on every event says which rule it was written under.

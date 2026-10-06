@@ -26,16 +26,16 @@ async function posthog() {
   if (!env.POSTHOG_PERSONAL_API_KEY || !env.POSTHOG_PROJECT_ID) return skip('telemetry read-back: POSTHOG_PERSONAL_API_KEY / POSTHOG_PROJECT_ID not set');
   const host = (env.POSTHOG_API_HOST || 'https://us.posthog.com').replace(/\/$/, '');
   const q = `select count(), any(properties.schema), any(properties.sent_at) from events where event = 'fleet_kit_smoke' and properties.run_id = '${runId}'`;
-  const deadline = Date.now() + 120000;
+  const deadline = Date.now() + 300000;
   while (Date.now() < deadline) {
     const res = await fetch(`${host}/api/projects/${env.POSTHOG_PROJECT_ID}/query/`, { method: 'POST', headers: { authorization: 'Bearer ' + env.POSTHOG_PERSONAL_API_KEY, 'content-type': 'application/json' }, body: JSON.stringify({ query: { kind: 'HogQLQuery', query: q } }) });
     if (!res.ok) return fail(`telemetry read-back: HogQL -> ${res.status} ${(await res.text()).slice(0, 200)}`);
     const j = await res.json();
     const row = (j.results || [])[0] || [0];
-    if (+row[0] > 0) return ok(`telemetry read-back: HogQL found ${row[0]} event(s) with schema ${row[1]} after ${Math.round((Date.now() - (deadline - 120000)) / 1000)}s`);
+    if (+row[0] > 0) return ok(`telemetry read-back: HogQL found ${row[0]} event(s) with schema ${row[1]} after ${Math.round((Date.now() - (deadline - 300000)) / 1000)}s`);
     await new Promise((r2) => setTimeout(r2, 5000));
   }
-  fail('telemetry read-back: the event did not appear in HogQL within 120s');
+  fail('telemetry read-back: the event did not appear in HogQL within 300s');
 }
 
 async function mailosaur() {
