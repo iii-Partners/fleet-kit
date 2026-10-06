@@ -1,0 +1,39 @@
+{
+  "name": "@iii-partners/fleet-kit",
+  "version": "0.1.0",
+  "description": "The iii Partners fleet kit: one telemetry capture helper for the Fleet Telemetry Standard (PostHog, one schema for every pillar) and one delivery-proof helper (Mailosaur: wait for the email or SMS a pillar really sent, extract the code and the links, prove the links resolve and no placeholder leaked). Zero dependencies.",
+  "type": "module",
+  "exports": {
+    "./telemetry": "./telemetry/index.js",
+    "./delivery-proof": "./delivery-proof/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "telemetry",
+    "delivery-proof",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:live": "node test/live.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "iii-partners",
+    "telemetry",
+    "posthog",
+    "mailosaur",
+    "delivery-proof",
+    "harness"
+  ],
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iii-Partners/fleet-kit"
+  },
+  "bugs": {
+    "url": "https://github.com/iii-Partners/iii-eye/issues/528"
+  }
+}

@@ -1,0 +1,17 @@
+name: test
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: zero dependencies
+        run: node -e 'const p=require("./package.json"); const d=Object.keys(p.dependencies||{}); if(d.length){console.error("dependencies present: "+d.join(", ")); process.exit(1)} console.log("zero dependencies")'
