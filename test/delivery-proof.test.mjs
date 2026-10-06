@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { configure, generateEmail, waitForEmail, waitForSms, waitForMessage, extractCode, extractLinks, assertLinksResolve, assertNoPlaceholders, assertSender, assertSubject, assertRecipient, assertContains, stripHtml, textOf, DeliveryError, PLACEHOLDER_PATTERNS } from '../delivery-proof/index.js';
+import { followLink, configure, generateEmail, waitForEmail, waitForSms, waitForMessage, extractCode, extractLinks, assertLinksResolve, assertNoPlaceholders, assertSender, assertSubject, assertRecipient, assertContains, stripHtml, textOf, DeliveryError, PLACEHOLDER_PATTERNS } from '../delivery-proof/index.js';
 
 function listen(handler) {
   const srv = http.createServer(handler);
@@ -91,6 +91,11 @@ test('assert helpers: sender, subject, recipient, contains', () => {
 
 test('assertLinksResolve: 200 and a redirect to 200 pass; a 404, a network error and a redirect to an error page fail by name; skip works', async () => {
   const { srv, base } = await listen((req, res) => {
+    if (req.url === '/login') { res.writeHead(302, { location: '/session', 'set-cookie': 'sid=abc; Path=/; HttpOnly' }); res.end(); return; }
+    if (req.url === '/session') { if (/sid=abc/.test(req.headers.cookie || '')) { res.writeHead(200); res.end('welcome'); } else { res.writeHead(302, { location: '/login' }); res.end(); } return; }
+    if (req.url === '/loop') { res.writeHead(302, { location: '/loop' }); res.end(); return; }
+    if (req.url === '/oauth-error') { res.writeHead(302, { location: '/callback?error=invalid_request' }); res.end(); return; }
+    if (req.url.startsWith('/callback')) { res.writeHead(400); res.end('bad'); return; }
     if (req.url === '/busy') { if (!global.__busy) { global.__busy = 1; res.writeHead(429, { 'retry-after': '1' }); res.end('slow down'); return; } res.writeHead(200); res.end('ok now'); return; }
     if (req.url === '/always429') { res.writeHead(429); res.end('no'); return; }
     if (req.url === '/flaky') { if (!global.__flaky) { global.__flaky = 1; req.socket.destroy(); return; } res.writeHead(200); res.end('recovered'); return; }
@@ -104,6 +109,13 @@ test('assertLinksResolve: 200 and a redirect to 200 pass; a 404, a network error
     await assert.rejects(() => assertLinksResolve(`<a href="${base}/ok">a</a> <a href="${base}/missing">b</a>`), (e) => e instanceof DeliveryError && /missing/.test(e.message) && /404/.test(e.message) && e.results.length === 2);
     await assert.rejects(() => assertLinksResolve(`${base}/gone`), (e) => /redirected to an error page/.test(e.message));
     await assert.rejects(() => assertLinksResolve('http://127.0.0.1:9/dead', { timeoutMs: 2000 }), (e) => e instanceof DeliveryError && /dead/.test(e.message) && /after 2 attempt/.test(e.message));
+    const login = await assertLinksResolve(`${base}/login`);
+    assert.equal(login[0].status, 200, 'a cookie-gated login flow lands on the page (cookie jar)');
+    assert.deepEqual(login[0].hops.map((h) => h.status), [302, 200]);
+    const nocookie = await followLink(`${base}/login`, { fetch: async (u, o) => fetch(u, { ...o, headers: { ...o.headers, cookie: '' } }), maxHops: 4 });
+    assert.equal(nocookie.loop, true, 'without the jar the same flow loops');
+    await assert.rejects(() => assertLinksResolve(`${base}/loop`, { maxHops: 3 }), (e) => /redirect loop \(4 hops/.test(e.message));
+    await assert.rejects(() => assertLinksResolve(`${base}/oauth-error`), (e) => /400 at .*error=invalid_request/.test(e.message), 'landing on ?error= is a failure by name');
     const busy = await assertLinksResolve(`${base}/busy`);
     assert.equal(busy[0].attempts, 2, 'a 429 with Retry-After is retried once and then passes');
     await assert.rejects(() => assertLinksResolve(`${base}/always429`, { laterAttempts: 2, retryAfterCapMs: 50 }), (e) => /429 after 2 attempt/.test(e.message), 'a persistent 429 fails by status after the later attempts');

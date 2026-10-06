@@ -267,13 +267,39 @@ export function assertNoPlaceholders(input, { allow = [], extra = [] } = {}) {
 }
 
 /**
- * Fetch every link (GET, redirects followed) and throw DeliveryError naming each one that fails: a non-2xx final status,
- * a network error that repeats (`retries`, default one retry), a 429/503 that persists through `laterAttempts` (default 3,
- * waiting Retry-After or 5 s, 10 s, capped at `retryAfterCapMs`; any other status is final at once), or a redirect that
- * lands on an error-looking URL. Use `concurrency: 1` against a rate-limited host. `skip` (strings or RegExps) excludes links that
- * must not be consumed by a probe (one-time magic links, unsubscribe). Resolves [{ url, status, final, redirected, ok }].
+ * Follow one link the way a browser would: manual redirects with a per-host cookie jar (login flows set a cookie on the
+ * first hop and bounce a cookieless client forever), up to `maxHops`. Resolves { status, final, redirected, hops, loop }.
  */
-export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, fetch: f = globalThis.fetch, concurrency = 4, errorPagePattern = /\/(error|not-?found|404|expired|invalid|unavailable)(\/|\?|#|$)/i, allowStatus = [], retries = 1, laterAttempts = 3, retryAfterCapMs = 15000 } = {}) {
+export async function followLink(url, { fetch: f = globalThis.fetch, timeoutMs = 10000, maxHops = 10, headers = {} } = {}) {
+  const jar = new Map();
+  const hops = [];
+  let u = url;
+  for (let i = 0; i <= maxHops; i++) {
+    const host = new URL(u).host;
+    const cookies = jar.get(host);
+    const cookie = cookies ? [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join('; ') : '';
+    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined;
+    const r = await f(u, { method: 'GET', redirect: 'manual', headers: { 'user-agent': 'iii-partners fleet-kit delivery-proof', accept: 'text/html,*/*', ...headers, ...(cookie ? { cookie } : {}) }, signal });
+    const setCookies = typeof r.headers.getSetCookie === 'function' ? r.headers.getSetCookie() : (r.headers.get('set-cookie') ? [r.headers.get('set-cookie')] : []);
+    for (const c of setCookies) { const kv = String(c).split(';')[0]; const eq = kv.indexOf('='); if (eq > 0) { const m = jar.get(host) || new Map(); m.set(kv.slice(0, eq).trim(), kv.slice(eq + 1).trim()); jar.set(host, m); } }
+    hops.push({ url: u, status: r.status });
+    try { if (r.body && typeof r.body.cancel === 'function') await r.body.cancel(); } catch { /* ignore */ }
+    const loc = r.headers.get('location');
+    if (r.status >= 300 && r.status < 400 && loc) { u = new URL(loc, u).toString(); continue; }
+    return { status: r.status, final: u, redirected: hops.length > 1, hops, loop: false };
+  }
+  return { status: 0, final: u, redirected: true, hops, loop: true };
+}
+
+/**
+ * Resolve every link (cookie-aware redirect following, see followLink) and throw DeliveryError naming each one that fails: a
+ * non-2xx final status, a redirect loop, a network error that repeats (`retries`, default one retry), a 429/503 that
+ * persists through `laterAttempts` (default 3, waiting Retry-After or 5 s, 10 s, capped at `retryAfterCapMs`; any other
+ * status is final at once), or a redirect that lands on an error-looking URL. `skip` (strings or RegExps) excludes links a
+ * probe must not consume (one-time magic links, unsubscribe). Use `concurrency: 1` against a rate-limited host.
+ * Resolves [{ url, status, final, redirected, hops, ok, attempts, reason }].
+ */
+export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, fetch: f = globalThis.fetch, concurrency = 4, errorPagePattern = /\/(error|not-?found|404|expired|invalid|unavailable)(\/|\?|#|$)/i, allowStatus = [], retries = 1, laterAttempts = 3, retryAfterCapMs = 15000, maxHops = 10 } = {}) {
   const links = extractLinks(input).filter((l) => !skip.some((s) => (s instanceof RegExp ? s.test(l) : l.includes(String(s)))));
   const results = [];
   let i = 0;
@@ -282,20 +308,19 @@ export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, 
       const url = links[i++];
       for (let attempt = 0; ; attempt++) {
         try {
-          const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined;
-          const r = await f(url, { method: 'GET', redirect: 'follow', headers: { 'user-agent': 'iii-partners fleet-kit delivery-proof', accept: '*/*' }, signal });
-          try { if (r.body && typeof r.body.cancel === 'function') await r.body.cancel(); } catch { /* ignore */ }
-          const final = r.url || url;
+          const r = await followLink(url, { fetch: f, timeoutMs, maxHops });
+          if (r.loop) { results.push({ ...r, url, ok: false, attempts: attempt + 1, reason: `redirect loop (${r.hops.length} hops, last ${r.hops[r.hops.length - 1].url})` }); break; }
           // 429 / 503 mean "later", not "broken": wait Retry-After (capped) and try again; persistent, they fail by status.
-          if ((r.status === 429 || r.status === 503) && attempt < Math.max(retries, laterAttempts - 1)) { const ra = Number(r.headers && r.headers.get && r.headers.get('retry-after')); await sleep(Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 5000 * (attempt + 1), retryAfterCapMs)); continue; }
-          const ok = ((r.status >= 200 && r.status < 300) || allowStatus.includes(r.status)) && !(r.redirected && errorPagePattern.test(final));
-          results.push({ url, status: r.status, final, redirected: !!r.redirected, ok, attempts: attempt + 1, reason: ok ? undefined : (r.status >= 200 && r.status < 300 ? `redirected to an error page ${final}` : `${r.status}${attempt ? ` after ${attempt + 1} attempt(s)` : ''}`) });
+          if ((r.status === 429 || r.status === 503) && attempt < Math.max(retries, laterAttempts - 1)) { await sleep(Math.min(5000 * (attempt + 1), retryAfterCapMs)); continue; }
+          const errorPage = r.redirected && (errorPagePattern.test(r.final) || /[?&]error=/.test(r.final));
+          const ok = ((r.status >= 200 && r.status < 300) || allowStatus.includes(r.status)) && !errorPage;
+          results.push({ ...r, url, ok, attempts: attempt + 1, reason: ok ? undefined : (r.status >= 200 && r.status < 300 ? `redirected to an error page ${r.final}` : `${r.status}${r.redirected ? ` at ${r.final}` : ''}${attempt ? ` after ${attempt + 1} attempt(s)` : ''}`) });
           break;
         } catch (e) {
-          // A network-level failure (reset, DNS, timeout) is not a broken link until it happens twice; a status is never retried.
+          // A network-level failure (reset, DNS, timeout) is not a broken link until it happens twice; a status is never retried here.
           if (attempt < retries) { await sleep(500 * (attempt + 1)); continue; }
           const cause = e && e.cause && (e.cause.code || e.cause.message);
-          results.push({ url, status: 0, final: url, redirected: false, ok: false, attempts: attempt + 1, reason: `${(e && e.message) || String(e)}${cause ? ` (${cause})` : ''} after ${attempt + 1} attempt(s)` });
+          results.push({ url, status: 0, final: url, redirected: false, hops: [], ok: false, attempts: attempt + 1, reason: `${(e && e.message) || String(e)}${cause ? ` (${cause})` : ''} after ${attempt + 1} attempt(s)` });
           break;
         }
       }
