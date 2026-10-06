@@ -1,6 +1,6 @@
 {
   "name": "@iii-partners/fleet-kit",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "The iii Partners fleet kit: one telemetry capture helper for the Fleet Telemetry Standard (PostHog, one schema for every pillar) and one delivery-proof helper (Mailosaur: wait for the email or SMS a pillar really sent, extract the code and the links, prove the links resolve and no placeholder leaked). Zero dependencies.",
   "type": "module",
   "exports": {

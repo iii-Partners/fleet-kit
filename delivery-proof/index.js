@@ -268,11 +268,12 @@ export function assertNoPlaceholders(input, { allow = [], extra = [] } = {}) {
 
 /**
  * Fetch every link (GET, redirects followed) and throw DeliveryError naming each one that fails: a non-2xx final status,
- * a network error or a 429/503 that repeats (one retry, honouring Retry-After up to `retryAfterCapMs`; any other status is
- * final at once), or a redirect that lands on an error-looking URL. `skip` (strings or RegExps) excludes links that
+ * a network error that repeats (`retries`, default one retry), a 429/503 that persists through `laterAttempts` (default 3,
+ * waiting Retry-After or 5 s, 10 s, capped at `retryAfterCapMs`; any other status is final at once), or a redirect that
+ * lands on an error-looking URL. Use `concurrency: 1` against a rate-limited host. `skip` (strings or RegExps) excludes links that
  * must not be consumed by a probe (one-time magic links, unsubscribe). Resolves [{ url, status, final, redirected, ok }].
  */
-export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, fetch: f = globalThis.fetch, concurrency = 4, errorPagePattern = /\/(error|not-?found|404|expired|invalid|unavailable)(\/|\?|#|$)/i, allowStatus = [], retries = 1, retryAfterCapMs = 15000 } = {}) {
+export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, fetch: f = globalThis.fetch, concurrency = 4, errorPagePattern = /\/(error|not-?found|404|expired|invalid|unavailable)(\/|\?|#|$)/i, allowStatus = [], retries = 1, laterAttempts = 3, retryAfterCapMs = 15000 } = {}) {
   const links = extractLinks(input).filter((l) => !skip.some((s) => (s instanceof RegExp ? s.test(l) : l.includes(String(s)))));
   const results = [];
   let i = 0;
@@ -286,7 +287,7 @@ export async function assertLinksResolve(input, { skip = [], timeoutMs = 10000, 
           try { if (r.body && typeof r.body.cancel === 'function') await r.body.cancel(); } catch { /* ignore */ }
           const final = r.url || url;
           // 429 / 503 mean "later", not "broken": wait Retry-After (capped) and try again; persistent, they fail by status.
-          if ((r.status === 429 || r.status === 503) && attempt < retries) { const ra = Number(r.headers && r.headers.get && r.headers.get('retry-after')); await sleep(Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 1000 * (attempt + 1), retryAfterCapMs)); continue; }
+          if ((r.status === 429 || r.status === 503) && attempt < Math.max(retries, laterAttempts - 1)) { const ra = Number(r.headers && r.headers.get && r.headers.get('retry-after')); await sleep(Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 5000 * (attempt + 1), retryAfterCapMs)); continue; }
           const ok = ((r.status >= 200 && r.status < 300) || allowStatus.includes(r.status)) && !(r.redirected && errorPagePattern.test(final));
           results.push({ url, status: r.status, final, redirected: !!r.redirected, ok, attempts: attempt + 1, reason: ok ? undefined : (r.status >= 200 && r.status < 300 ? `redirected to an error page ${final}` : `${r.status}${attempt ? ` after ${attempt + 1} attempt(s)` : ''}`) });
           break;

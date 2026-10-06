@@ -8,7 +8,7 @@ Two small helpers every iii Partners pillar uses, so the fleet proves the same t
 Zero dependencies. ESM. Node 18+, Cloudflare Workers, browsers.
 
 ```sh
-npm install github:iii-Partners/fleet-kit#v0.1.2
+npm install github:iii-Partners/fleet-kit#v0.1.3
 ```
 
 ## telemetry
@@ -108,8 +108,9 @@ PostHog accepts a batch in under a second but a quiet project can take a few min
 
 ## Versions
 
-Pillars pin a tag: `github:iii-Partners/fleet-kit#v0.1.2`. A change to the schema bumps the kit's minor version and the standard's version together; the `schema` property on every event says which rule it was written under.
+Pillars pin a tag: `github:iii-Partners/fleet-kit#v0.1.3`. A change to the schema bumps the kit's minor version and the standard's version together; the `schema` property on every event says which rule it was written under.
 
+- **v0.1.3** (2026-10-06): 429/503 get up to three attempts (`laterAttempts`), waiting Retry-After or 5 s then 10 s; `concurrency: 1` is the setting for a rate-limited host.
 - **v0.1.2** (2026-10-06): `assertLinksResolve` treats 429 and 503 as "later": one retry honouring `Retry-After` (capped at 15 s); persistent, they fail by status. Seen when a shared machine drove several harness runs against production at once.
 - **v0.1.1** (2026-10-06): `extractLinks` no longer counts DOCTYPE, `xmlns` or CSS `url()` addresses that live only in the markup (hrefs plus bare URLs in the visible text); `assertLinksResolve` retries a network-level failure once (a status is never retried) and names the cause. Found by EYE's first live invite proof.
 - **v0.1.0** (2026-10-06): first release. `telemetry` (createTelemetry, validate, redact, parseStack, costUsd, postHogTransport) and `delivery-proof` (generateEmail, waitForEmail, waitForSms, waitForMessage, extractCode, extractLinks, assertLinksResolve, assertNoPlaceholders, assertSender, assertSubject, assertRecipient, assertContains, deleteMessage, deleteAllMessages, listMessages, serverInfo).

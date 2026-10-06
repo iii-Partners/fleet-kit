@@ -106,7 +106,7 @@ test('assertLinksResolve: 200 and a redirect to 200 pass; a 404, a network error
     await assert.rejects(() => assertLinksResolve('http://127.0.0.1:9/dead', { timeoutMs: 2000 }), (e) => e instanceof DeliveryError && /dead/.test(e.message) && /after 2 attempt/.test(e.message));
     const busy = await assertLinksResolve(`${base}/busy`);
     assert.equal(busy[0].attempts, 2, 'a 429 with Retry-After is retried once and then passes');
-    await assert.rejects(() => assertLinksResolve(`${base}/always429`), (e) => /429 after 2 attempt/.test(e.message), 'a persistent 429 fails by status');
+    await assert.rejects(() => assertLinksResolve(`${base}/always429`, { laterAttempts: 2, retryAfterCapMs: 50 }), (e) => /429 after 2 attempt/.test(e.message), 'a persistent 429 fails by status after the later attempts');
     const flaky = await assertLinksResolve(`${base}/flaky`);
     assert.equal(flaky[0].attempts, 2, 'a reset connection is retried once and then passes');
     await assert.rejects(() => assertLinksResolve('http://127.0.0.1:9/dead2', { timeoutMs: 2000, retries: 0 }), (e) => /after 1 attempt/.test(e.message), 'retries: 0 fails on the first network error');
